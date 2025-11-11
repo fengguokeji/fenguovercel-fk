@@ -11,7 +11,7 @@ import {
   STABLE_APP_ID, STABLE_GATE_WAY, STABLE_ENDPOINT, STABLE_APP_PRIVATE_KEY, STABLE_ALIPAY_PUBLIC_KEY,
 } from './helper.js';
 import {
-  AlipayFormData, AlipayFormStream, AlipayRequestError, AlipaySdk, AlipaySdkConfig,
+  AlipayFormData, AlipayFormStream, AlipayRequestError, AlipayCURLOptions, AlipaySdk, AlipaySdkConfig,
   ProxyAgent,
 } from '../src/index.js';
 import { aesDecryptText } from '../src/util.js';
@@ -126,6 +126,34 @@ describe('test/alipay.test.ts', () => {
         assert.equal(err.responseHttpStatus, 401);
         return true;
       });
+    });
+
+    it('支持 log 选项', async () => {
+      const infos: any[][] = [];
+      const errors: any[][] = [];
+      const logger: NonNullable<AlipayCURLOptions['log']> = {
+        info: (...args: any[]) => { infos.push(args); },
+        error: (...args: any[]) => { errors.push(args); },
+      };
+      await assert.rejects(async () => {
+        await sdkStable.curl('POST', '/v3/alipay/user/info/share', {
+          body: {
+            auth_token: '20120823ac6ffaa4d2d84e7384bf983531473993',
+          },
+          log: logger,
+        });
+      }, err => {
+        assert(err instanceof AlipayRequestError);
+        assert.match(err.message, /无效的访问令牌/);
+        assert.equal(err.links!.length, 1);
+        assert.equal(err.code, 'invalid-auth-token');
+        assert(err.traceId);
+        assert.equal(err.responseHttpStatus, 401);
+        return true;
+      });
+      assert(infos.length >= 1);
+      assert(errors.length >= 1);
+      assert.match(String(infos[0][0]), /AlipaySdk/);
     });
 
     it('使用 HTTP 代理调用', async () => {
