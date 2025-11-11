@@ -82,6 +82,40 @@ export async function ensureOrdersTable(): Promise<void> {
   await ensurePromise;
 }
 
+export interface DatabaseStatus {
+  ok: boolean;
+  mode: 'memory' | 'postgres';
+  message: string;
+  error?: string;
+}
+
+export async function checkDatabaseConnection(): Promise<DatabaseStatus> {
+  if (useMemoryStore) {
+    return {
+      ok: true,
+      mode: 'memory',
+      message: '当前未配置数据库连接，应用正在使用内存存储。'
+    };
+  }
+
+  try {
+    await ensureOrdersTable();
+    await sql`SELECT 1`;
+    return {
+      ok: true,
+      mode: 'postgres',
+      message: '已成功连接到 Postgres，并确保 orders 表已创建。'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      mode: 'postgres',
+      message: '无法连接到 Postgres 数据库，请检查连接字符串配置。',
+      error: error instanceof Error ? error.message : '未知错误'
+    };
+  }
+}
+
 export interface CreateOrderInput {
   id: string;
   email: string;
