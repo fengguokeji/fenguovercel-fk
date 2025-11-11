@@ -133,12 +133,14 @@ export interface ISdkExecuteOptions {
   bizContentAutoSnakeCase?: boolean;
 }
 
+interface AlipaySdkLogger {
+  info(...args: any[]): any;
+  error(...args: any[]): any;
+}
+
 export interface IRequestOption {
   validateSign?: boolean;
-  log?: {
-    info(...args: any[]): any;
-    error(...args: any[]): any;
-  };
+  log?: AlipaySdkLogger;
   formData?: AlipayFormData;
   /**
    * 请求的唯一标识
@@ -169,6 +171,8 @@ export interface AlipayCURLOptions {
   requestTimeout?: number;
   /** 支持覆盖默认的 agent  */
   agent?: ProxyAgent;
+  /** 可选日志记录对象 */
+  log?: AlipaySdkLogger;
 }
 
 /**
@@ -338,6 +342,7 @@ export class AlipaySdk {
     let url = `${this.config.endpoint}${path}`;
     let httpRequestUrl = path;
     let httpRequestBody = '';
+    const logger = options?.log;
     const requestOptions: RequestOptions = {
       method: httpMethod,
       dataType: dataType === 'stream' ? 'stream' : 'text',
@@ -477,12 +482,16 @@ export class AlipaySdk {
     requestOptions.headers.authorization = authorization;
     debug('curl %s %s, with body: %s, headers: %j, dataType: %s',
       httpMethod, url, httpRequestBody, requestOptions.headers, dataType);
+    logger?.info?.('[AlipaySdk] curl %s %s, with body: %s, headers: %j, dataType: %s',
+      httpMethod, url, httpRequestBody, requestOptions.headers, dataType);
     let httpResponse: HttpClientResponse<any>;
     try {
       httpResponse = await urllib.request(url, requestOptions);
     } catch (err: any) {
       debug('HttpClient Request error: %s', err.message);
       debug(err);
+      logger?.error?.('[AlipaySdk] HttpClient Request error: %s', err.message);
+      logger?.error?.(err);
       throw new AlipayRequestError(`HttpClient Request error, ${err.message}`, {
         cause: err,
         traceId: requestId,
@@ -490,6 +499,8 @@ export class AlipaySdk {
     }
     const traceId = httpResponse.headers['alipay-trace-id'] as string ?? requestId;
     debug('curl response status: %s, headers: %j, raw text body: %s, traceId: %s',
+      httpResponse.status, httpResponse.headers, httpResponse.data, traceId);
+    logger?.info?.('[AlipaySdk] curl response status: %s, headers: %j, raw text body: %s, traceId: %s',
       httpResponse.status, httpResponse.headers, httpResponse.data, traceId);
     // 错误码封装 https://opendocs.alipay.com/open-v3/054fcv?pathHash=7bdeefa1
     if (httpResponse.status >= 400) {
@@ -503,9 +514,12 @@ export class AlipaySdk {
         const bytes = await readableToBytes(httpResponse.res);
         errorData = JSON.parse(bytes.toString());
         debug('stream to errorData: %j', errorData);
+        logger?.error?.('[AlipaySdk] stream to errorData: %j', errorData);
       } else {
         errorData = JSON.parse(httpResponse.data);
       }
+      logger?.error?.('[AlipaySdk] request failed status: %s, error: %j',
+        httpResponse.status, errorData);
       throw new AlipayRequestError(errorData.message, {
         code: errorData.code,
         links: errorData.links,
