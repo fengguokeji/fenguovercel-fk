@@ -33,7 +33,21 @@
 
 3. **初始化数据库**
 
-   Next.js API 首次调用时会自动创建 `orders` 表。若要提前创建，可执行任意需要数据库的 API（例如在本地运行开发服务器并提交测试订单）。
+   Next.js API 首次调用时会自动创建 `orders` 表并写入订单数据，因此无需手动预置订单号、邮箱或支付信息。
+   若要提前验证数据库连接，可执行任意需要数据库的 API（例如在本地运行开发服务器并提交测试订单）。
+
+   ```bash
+   # 在本地直接创建一笔测试订单（会自动生成订单号、二维码等信息）
+   curl -X POST http://localhost:3000/api/orders \
+     -H "Content-Type: application/json" \
+     -d '{
+       "email": "tester@example.com",
+       "planId": "basic",
+       "quantity": 1
+     }'
+   ```
+
+   成功后可以通过 `/api/orders?email=tester@example.com` 或前端的“订单中心”页面查看数据库中的订单记录。
 
 4. **本地开发**
 
