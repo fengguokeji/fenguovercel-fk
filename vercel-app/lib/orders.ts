@@ -25,49 +25,130 @@ const connectionHost = (() => {
 const isVercelPostgresHost = Boolean(connectionHost && connectionHost.endsWith('.vercel-storage.com'));
 const shouldUsePgClient = Boolean(connectionString && !isVercelPostgresHost);
 
+const TLS_ERROR_PATTERNS = [
+  'self-signed certificate',
+  'unable to verify the first certificate',
+  'DEPTH_ZERO_SELF_SIGNED_CERT'
+];
+
 let pgPool: Pool | undefined;
+let pgPoolUsesInsecureSsl = global.__ORDER_PG_POOL_INSECURE__ ?? false;
 
 const sql: SqlExecutor = shouldUsePgClient
   ? (async <T = unknown>(strings: TemplateStringsArray, ...values: any[]) => {
-      if (!pgPool) {
-        const config: PoolConfig = { connectionString: connectionString! };
-
-        const sslMode = (() => {
-          if (!connectionString) return undefined;
-          try {
-            const url = new URL(connectionString);
-            const param = url.searchParams.get('sslmode');
-            if (param && param !== 'disable') {
-              return { rejectUnauthorized: false } as const;
-            }
-          } catch {
-            // ignore parsing errors, fall back to heuristic checks below
-          }
-          if (connectionHost && /supabase\.co$|supabase\.com$/.test(connectionHost)) {
-            return { rejectUnauthorized: false } as const;
-          }
-          return process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } as const : undefined;
-        })();
-
-        if (sslMode) {
-          config.ssl = sslMode;
-        }
-
-        pgPool = global.__ORDER_PG_POOL__ ?? new Pool(config);
-        if (!global.__ORDER_PG_POOL__) {
-          global.__ORDER_PG_POOL__ = pgPool;
-        }
-      }
+      const pool = await getPgPool();
 
       const text = strings.reduce((acc, current, index) => {
         const placeholder = index < values.length ? `$${index + 1}` : '';
         return acc + current + placeholder;
       }, '');
 
-      const result = await pgPool.query(text, values);
-      return { rows: result.rows as T[] };
+      try {
+        const result = await pool.query(text, values);
+        return { rows: result.rows as T[] };
+      } catch (error) {
+        const recovered = await tryRecoverFromTlsError<T>(error, text, values);
+        if (recovered) {
+          return { rows: recovered };
+        }
+        throw error;
+      }
     })
   : (vercelSql as SqlExecutor);
+
+async function getPgPool(forceInsecure = false): Promise<Pool> {
+  if (pgPool) {
+    if (!forceInsecure || pgPoolUsesInsecureSsl) {
+      return pgPool;
+    }
+    await pgPool.end().catch(() => undefined);
+    pgPool = undefined;
+  }
+
+  const existing = global.__ORDER_PG_POOL__;
+  const existingIsInsecure = global.__ORDER_PG_POOL_INSECURE__ ?? false;
+
+  if (existing && (!forceInsecure || existingIsInsecure)) {
+    pgPool = existing;
+    pgPoolUsesInsecureSsl = existingIsInsecure;
+    return existing;
+  }
+
+  if (existing && forceInsecure && !existingIsInsecure) {
+    await existing.end().catch(() => undefined);
+  }
+
+  const nextPool = new Pool(buildPoolConfig(forceInsecure));
+  pgPool = nextPool;
+  pgPoolUsesInsecureSsl = forceInsecure;
+  global.__ORDER_PG_POOL__ = nextPool;
+  global.__ORDER_PG_POOL_INSECURE__ = forceInsecure;
+  return nextPool;
+}
+
+function buildPoolConfig(forceInsecure: boolean): PoolConfig {
+  const config: PoolConfig = { connectionString: connectionString! };
+  const sslOptions = resolveSslOptions(forceInsecure);
+
+  if (sslOptions) {
+    config.ssl = sslOptions;
+  }
+
+  return config;
+}
+
+function resolveSslOptions(forceInsecure: boolean): PoolConfig['ssl'] {
+  if (forceInsecure) {
+    return { rejectUnauthorized: false };
+  }
+
+  if (!connectionString) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(connectionString);
+    const param = url.searchParams.get('sslmode');
+    if (param && param !== 'disable') {
+      return { rejectUnauthorized: false };
+    }
+  } catch {
+    // ignore parsing errors, fall back to heuristic checks below
+  }
+
+  if (connectionHost && /supabase\.co$|supabase\.com$/.test(connectionHost)) {
+    return { rejectUnauthorized: false };
+  }
+
+  return process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined;
+}
+
+async function tryRecoverFromTlsError<T>(error: unknown, text: string, values: any[]): Promise<T[] | null> {
+  if (!shouldRetryWithInsecure(error)) {
+    return null;
+  }
+
+  const pool = await getPgPool(true);
+  const result = await pool.query(text, values);
+  return result.rows as T[];
+}
+
+function shouldRetryWithInsecure(error: unknown): boolean {
+  if (pgPoolUsesInsecureSsl) {
+    return false;
+  }
+
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const message = 'message' in error ? String((error as { message?: unknown }).message ?? '') : '';
+  if (!message) {
+    return false;
+  }
+
+  return TLS_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
+}
 
 const useMemoryStore =
   !process.env.POSTGRES_URL &&
@@ -81,6 +162,7 @@ declare global {
   // eslint-disable-next-line no-var
   var __ORDER_STORE__: MemoryStore | undefined;
   var __ORDER_PG_POOL__: Pool | undefined;
+  var __ORDER_PG_POOL_INSECURE__: boolean | undefined;
 }
 
 function getMemoryStore(): MemoryStore {
