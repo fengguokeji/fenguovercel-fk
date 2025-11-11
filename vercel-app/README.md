@@ -49,6 +49,16 @@
 
    成功后可以通过 `/api/orders?email=tester@example.com` 或前端的“订单中心”页面查看数据库中的订单记录。
 
+   若需要确认数据库是否已正确连接并可用，可访问新增的健康检查接口：
+
+   ```bash
+   curl http://localhost:3000/api/health/database
+   ```
+
+   - 当返回 `{ "ok": true, "mode": "postgres" }` 时表示已成功连通 Postgres。
+   - 若当前使用内存存储，会返回 `{ "ok": true, "mode": "memory" }`，提示未配置数据库连接字符串。
+   - 当 `ok` 为 `false` 时，会包含错误信息，便于排查连接问题。
+
 4. **本地开发**
 
    ```bash
