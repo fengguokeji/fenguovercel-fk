@@ -501,6 +501,7 @@ curl 方式调用支付宝 [API v3 协议](https://opendocs.alipay.com/open-v3/0
 | options.needEncrypt | `boolean` | 自动 AES 加解密，默认值是 `false` | 否 |
 | options.appAuthToken | `string` | [应用授权令牌](https://opendocs.alipay.com/isv/10467/xldcyq?pathHash=abce531a)，代商家调用支付宝开放接口必填 | 否 |
 | options.requestTimeout | `number` | 请求超时时间，默认使用 `config.timeout` | 否 |
+| options.log | `Console` | 可选日志记录对象 | 否 |
 
 #### `AlipayCommonResult<T>`
 
