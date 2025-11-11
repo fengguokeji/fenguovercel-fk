@@ -1,5 +1,73 @@
-import { sql } from '@vercel/postgres';
+import { sql as vercelSql } from '@vercel/postgres';
+import { Pool, type PoolConfig } from 'pg';
 import { tutorialUrl, orderStatus, type OrderStatusKey } from './constants';
+
+type SqlExecutor = <T = unknown>(
+  strings: TemplateStringsArray,
+  ...values: any[]
+) => Promise<{ rows: T[] }>;
+
+const connectionString =
+  process.env.POSTGRES_URL_NON_POOLING ??
+  process.env.POSTGRES_PRISMA_URL ??
+  process.env.POSTGRES_URL ??
+  null;
+
+const connectionHost = (() => {
+  if (!connectionString) return undefined;
+  try {
+    return new URL(connectionString).hostname;
+  } catch {
+    return undefined;
+  }
+})();
+
+const isVercelPostgresHost = Boolean(connectionHost && connectionHost.endsWith('.vercel-storage.com'));
+const shouldUsePgClient = Boolean(connectionString && !isVercelPostgresHost);
+
+let pgPool: Pool | undefined;
+
+const sql: SqlExecutor = shouldUsePgClient
+  ? (async <T = unknown>(strings: TemplateStringsArray, ...values: any[]) => {
+      if (!pgPool) {
+        const config: PoolConfig = { connectionString: connectionString! };
+
+        const sslMode = (() => {
+          if (!connectionString) return undefined;
+          try {
+            const url = new URL(connectionString);
+            const param = url.searchParams.get('sslmode');
+            if (param && param !== 'disable') {
+              return { rejectUnauthorized: false } as const;
+            }
+          } catch {
+            // ignore parsing errors, fall back to heuristic checks below
+          }
+          if (connectionHost && /supabase\.co$|supabase\.com$/.test(connectionHost)) {
+            return { rejectUnauthorized: false } as const;
+          }
+          return process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } as const : undefined;
+        })();
+
+        if (sslMode) {
+          config.ssl = sslMode;
+        }
+
+        pgPool = global.__ORDER_PG_POOL__ ?? new Pool(config);
+        if (!global.__ORDER_PG_POOL__) {
+          global.__ORDER_PG_POOL__ = pgPool;
+        }
+      }
+
+      const text = strings.reduce((acc, current, index) => {
+        const placeholder = index < values.length ? `$${index + 1}` : '';
+        return acc + current + placeholder;
+      }, '');
+
+      const result = await pgPool.query(text, values);
+      return { rows: result.rows as T[] };
+    })
+  : (vercelSql as SqlExecutor);
 
 const useMemoryStore =
   !process.env.POSTGRES_URL &&
@@ -12,6 +80,7 @@ type MemoryStore = Map<string, OrderRow>;
 declare global {
   // eslint-disable-next-line no-var
   var __ORDER_STORE__: MemoryStore | undefined;
+  var __ORDER_PG_POOL__: Pool | undefined;
 }
 
 function getMemoryStore(): MemoryStore {
