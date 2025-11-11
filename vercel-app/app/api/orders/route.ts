@@ -6,6 +6,10 @@ import { tutorialUrl, orderStatus } from '@/lib/constants';
 import { createPreOrder } from '@/lib/alipay';
 import { createOrder, listOrdersByEmail } from '@/lib/orders';
 
+function buildQrCodeUrl(payload: string): string {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(payload)}`;
+}
+
 const createSchema = z.object({
   email: z.string().email(),
   planId: z.string(),
@@ -40,6 +44,7 @@ export async function POST(request: NextRequest) {
 
   const orderId = crypto.randomUUID();
   const amount = plan.price * quantity;
+  const qrCodeUrl = buildQrCodeUrl(plan.qrPayload);
 
   try {
     const notifyUrl = process.env.ALIPAY_NOTIFY_URL;
@@ -57,13 +62,13 @@ export async function POST(request: NextRequest) {
       planName: plan.name,
       amount,
       quantity,
-      paymentQrCode: preOrder.qrCode,
+      paymentQrCode: qrCodeUrl,
       simulated: preOrder.simulated
     });
 
     return NextResponse.json({
       orderId,
-      qrCode: preOrder.qrCode,
+      qrCode: qrCodeUrl,
       tutorialUrl,
       amount,
       status: orderStatus.pending,
