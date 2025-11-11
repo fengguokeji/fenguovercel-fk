@@ -209,8 +209,11 @@ function normalizeStatus(value: string): OrderStatusKey {
   return 'pending';
 }
 
-const ensurePromise = (async () => {
+let ensurePromise: Promise<void> | null = null;
+
+async function ensureOrdersTableOnce(): Promise<void> {
   if (useMemoryStore) return;
+
   await sql`
     CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
@@ -227,9 +230,18 @@ const ensurePromise = (async () => {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
-})();
+}
 
 export async function ensureOrdersTable(): Promise<void> {
+  if (useMemoryStore) return;
+
+  if (!ensurePromise) {
+    ensurePromise = ensureOrdersTableOnce().catch((error) => {
+      ensurePromise = null;
+      throw error;
+    });
+  }
+
   await ensurePromise;
 }
 
